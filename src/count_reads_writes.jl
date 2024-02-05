@@ -20,7 +20,7 @@ function count_reads_writes(funcall)
         let
             ctx = CounterCtx(metadata=Counter())
             $(v...)
-            Cassette.overdub(ctx, ()->begin
+            C.overdub(ctx, ()->begin
                              $e
                              end)
             ctx.metadata
