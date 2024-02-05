@@ -1,9 +1,17 @@
 abstract type AbstractCounter end
 export Counter
 @eval mutable struct Counter <: AbstractCounter
-    $((:($(name(op[1], itype, csym)) ::Int) for op in all_tup for (_, csym) in ctypes for itype in itypes)...)
+    $((:($(name(op[1], itype, csym)) ::Int) for op in all_tup for (_, csym) in ctypes() for itype in (itypes..., Vararg))...)
 end
 Counter() = Counter(zeros(length(fieldnames(Counter)))...)
+
+function Base.getproperty(c::AbstractCounter, sym::Symbol)
+    if sym in fieldnames(typeof(c))
+        return getfield(c, sym)
+    else
+        error("type $(typeof(c)) has no field $sym. fieldnames: $(fieldnames(typeof(c)))")
+    end
+end
 
 n_reads(c::AbstractCounter) = n_ops(c; match=:getindex)
 n_writes(c::AbstractCounter) = n_ops(c; match=:setindex)

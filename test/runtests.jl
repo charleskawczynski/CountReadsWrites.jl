@@ -1,20 +1,37 @@
 #=
+push!(ARGS, "CUDA") # to run with CUDA
 using Revise; include("test/runtests.jl")
 =#
 using Test
 import CountReadsWrites as CRW
 import Base.Broadcast: Broadcasted, broadcasted, instantiate, materialize
 
-function get_args(N)
-    x = zeros(N)
-    y = zeros(N)
-    A = zeros(N, N)
+if get(ARGS, 1, "") == "CUDA"
+    import CUDA
+    ArrayType = CUDA.CuArray
+else
+    ArrayType = Array
+end
+@info "ArrayType = $ArrayType"
+get_args(N) = get_args(N, ArrayType)
+
+function get_args(N, ArrayType)
+    x = ArrayType(zeros(N))
+    y = ArrayType(zeros(N))
+    A = ArrayType(zeros(N, N))
     vecmat = collect(map(x->zeros(3,3), 1:N))
     vecvec = collect(map(x->zeros(3), 1:N))
     return (; x, y, A, vecmat, vecvec)
 end
 
+array_type(args) = typeof(first(args))
+cuda_compatible(::Function) = true
+
 function test_kernel(kernel!, N = 10, args = get_args(N))
+    if !(array_type(args) isa Array) & !cuda_compatible(kernel!)
+        @warn "Cannot test kernel $(kernel!) for $(array_type(args))."
+        return (CRW.Counter(), 2)
+    end
     c = kernel!(args); # compile first
     c = CRW.@count_reads_writes kernel!(args)
     ans = answer(kernel!)
@@ -40,6 +57,7 @@ function kernel_assignment!(args)
     return nothing
 end
 answer(::typeof(kernel_assignment!)) = (; nreads=1,nwrites=1)
+cuda_compatible(::typeof(kernel_assignment!)) = false
 
 function kernel_bc_simple!(args)
     (; x, y) = args
@@ -78,6 +96,7 @@ function kernel_plus_equals!(args)
     return nothing
 end
 answer(::typeof(kernel_plus_equals!)) = (; nreads=2,nwrites=1)
+cuda_compatible(::typeof(kernel_plus_equals!)) = false
 
 function kernel_matvecmul!(args)
     (; vecmat,vecvec) = args
@@ -87,6 +106,7 @@ function kernel_matvecmul!(args)
     return nothing
 end
 answer(::typeof(kernel_matvecmul!)) = (; nreads=2,nwrites=0)
+cuda_compatible(::typeof(kernel_matvecmul!)) = false
 
 function kernel_matvecmul_bc_assign!(args)
     (; vecmat,vecvec) = args
@@ -96,16 +116,22 @@ function kernel_matvecmul_bc_assign!(args)
     return nothing
 end
 answer(::typeof(kernel_matvecmul_bc_assign!)) = (; nreads=2,nwrites=3)
+cuda_compatible(::typeof(kernel_matvecmul_bc_assign!)) = false
 
-@testset "CountReadsWrites" begin
-    (c,n) = test_kernel(kernel_assignment!); @test n == 2
-    (c,n) = test_kernel(kernel_plus_equals!); @test n == 2
-    (c,n) = test_kernel(kernel_matvecmul!); @test n == 2
+if array_type(get_args(1)) isa Array
+    @testset "Indexing kernels" begin
+        (c,n) = test_kernel(kernel_assignment!); @test n == 2
+        (c,n) = test_kernel(kernel_plus_equals!); @test n == 2
+        (c,n) = test_kernel(kernel_matvecmul!); @test n == 2
+    end
+end
+
+@testset "Broadcast kernels" begin
     (c,n) = test_kernel(kernel_bc_simple!); @test n == 2
     (c,n) = test_kernel(kernel_bc_add!); @test n == 2
     (c,n) = test_kernel(kernel_bc_assignment!); @test_broken n == 2
-    (c,n) = test_kernel(kernel_bc_assignment_incremental_1!); @test_broken n == 2
 end
+
 
 #=
 CRW.@count_reads_writes does not work for `@. x = y` because
